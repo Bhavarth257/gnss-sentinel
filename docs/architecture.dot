@@ -14,7 +14,8 @@ digraph GNSSSentinel {
     label=<<b>Simulation world</b>     <font color="#c27a2c">(index.html core · fixed 50 Hz step · one rover)</font>>;
     labeljust=l; fontcolor="#a8611b"; style="rounded,filled"; fillcolor="#fff4e8"; color="#f0a35c";
 
-    terrain [label=<<b>terrain + track</b><br/><font point-size="8">figure-eight, 146 m · West ridge 5.5 m<br/>East hill 4.5 m · urban block · tree cover</font>>];
+    terrain [label=<<b>terrain + trail</b><br/><font point-size="8">winding 318 m trail · summit 7.5 m · ravine −5 m<br/>rocky pass · town · pine hill · west bluff</font>>];
+    skym    [label=<<b>sky model</b><br/><font point-size="8">14 satellites · line of sight vs terrain<br/>and buildings · HDOP from geometry</font>>];
     truth   [label=<<b>rover truth</b><br/><font point-size="8">pose · speed · pitch from terrain<br/>slows on climbs and turns</font>>];
     faults  [label=<<b>fault injector</b><br/><font point-size="8">jump · slow drift · dropout · jamming<br/>auto test plan · keys 1–4 · dashboard buttons</font>>, style="rounded,filled,dashed"];
   }
@@ -26,7 +27,7 @@ digraph GNSSSentinel {
 
     gnss  [label=<<b>GNSS receiver</b><br/><font point-size="8">position · Doppler velocity · σ<br/>satellites · HDOP · C/N0 · 5 Hz</font>>];
     wheel [label=<<b>wheel encoders</b><br/><font point-size="8">speed along the ground<br/>1.5 % scale error · 50 Hz</font>>];
-    imu   [label=<<b>IMU</b><br/><font point-size="8">gyro yaw rate · accelerometer pitch<br/>0.14 °/s gyro bias · 50 Hz</font>>];
+    imu   [label=<<b>IMU</b><br/><font point-size="8">gyro yaw rate · accelerometer pitch<br/>0.06 °/s bias after calibration · 50 Hz</font>>];
   }
 
   // ---------------- Layer 3: GNSSSentinel ----------------
@@ -34,12 +35,12 @@ digraph GNSSSentinel {
     label=<<b>GNSSSentinel</b>     <font color="#3b6db3">(runs on the rover · every GPS fix, 5 Hz)</font>>;
     labeljust=l; fontcolor="#2a5597"; style="rounded,filled"; fillcolor="#eaf1fb"; color="#86a9da";
 
-    dr       [label=<<b>dead_reckoning</b><br/><font point-size="8">v · cos(pitch) along gyro heading<br/>learned gyro bias · covariance P</font>>];
+    dr       [label=<<b>dead_reckoning</b><br/><font point-size="8">v · cos(pitch) along gyro heading<br/>learned gyro bias and wheel scale</font>>];
     residual [label=<<b>residuals</b><br/><font point-size="8">displacement (2 s) · velocity<br/>heading · innovation, in σ units</font>>];
     quality  [label=<<b>receiver_quality</b><br/><font point-size="8">q from satellites · HDOP · C/N0</font>>];
     fast     [label=<<b>fast_term  f</b><br/><font point-size="8">largest residual, 3σ → 6σ<br/>catches jumps, multipath</font>>];
-    slow     [label=<<b>slow_term  g</b><br/><font point-size="8">EWMA of velocity residual + CUSUM<br/>catches creeping drift</font>>];
-    trust    [label=<<b>trust_update</b><br/><font point-size="8">T* = (1 − max(f, g)) · (0.35 + 0.65 q)<br/>falls fast · recovers after 3 s agreement</font>>,
+    slow     [label=<<b>slow_term  g</b><br/><font point-size="8">EWMA of velocity and speed residual<br/>+ CUSUM · catches creeping drift</font>>];
+    trust    [label=<<b>trust_update</b><br/><font point-size="8">T* = (1 − max(f, g)) · (0.35 + 0.65 q)<br/>falls fast · recovers after 2.5 s agreement<br/>re-anchors after long IMU-only spells</font>>,
               fillcolor="#d5e3fa", color="#3b6db3", penwidth=1.3];
     excl     [label=<<b>exclusion check</b><br/><font point-size="8">T &lt; 0.2 or f &gt; 0.5 ?</font>>, shape=box, style="rounded,filled,dashed"];
     kf       [label=<<b>position_filter</b><br/><font point-size="8">Kalman update, R = σ² / T<br/>position · heading · gyro bias</font>>,
@@ -63,8 +64,8 @@ digraph GNSSSentinel {
 
     nav     [label=<<b>navigation output</b><br/><font point-size="8">position · 2σ uncertainty · trust T · state<br/>mode: GNSS + IMU / IMU leading / IMU + wheels</font>>,
              fillcolor="#fffdf0", color="#b9a752"];
-    view3d  [label=<<b>3D view</b><br/><font point-size="8">terrain · rover on slope · satellites<br/>estimate markers and trails</font>>];
-    dash    [label=<<b>dashboard</b><br/><font point-size="8">trust gauge · residuals · 60 s charts<br/>fault buttons · test plan</font>>];
+    view3d  [label=<<b>3D view</b><br/><font point-size="8">terrain · town · rover on the slope<br/>satellites with line of sight · trails</font>>];
+    dash    [label=<<b>dashboard</b><br/><font point-size="8">trust ring · sky plot · trail profile<br/>event log · residual meters · faults</font>>];
     metrics [label=<<b>metrics</b><br/><font point-size="8">RMSE · max error · detection delay<br/>recovery time · false alarms · time on IMU</font>>, shape=note, fillcolor="#fffdf0", color="#b9a752"];
   }
 
@@ -72,7 +73,8 @@ digraph GNSSSentinel {
   truth   -> gnss  [label="true position\nand velocity"];
   truth   -> wheel [label="speed"];
   truth   -> imu   [label="yaw rate · pitch"];
-  terrain -> gnss  [label="sky masking ·\nhillside multipath", style=dashed, color="#c27a2c", fontcolor="#a8611b"];
+  terrain -> skym  [label="horizon"];
+  skym    -> gnss  [label="visible satellites ·\nmultipath near walls", style=dashed, color="#c27a2c", fontcolor="#a8611b"];
   faults  -> gnss  [label="offset · blackout ·\nC/N0 drop", style=dashed, color="#c27a2c", fontcolor="#a8611b"];
 
   // sensors -> GNSSSentinel
@@ -102,7 +104,7 @@ digraph GNSSSentinel {
   nav -> dash;
   nav -> metrics [label="error vs truth"];
 
-  { rank=same; terrain; truth; faults; }
+  { rank=same; terrain; truth; faults; skym; }
   { rank=same; gnss; wheel; imu; }
   { rank=same; fast; slow; quality; }
   { rank=same; excl; kf; }
