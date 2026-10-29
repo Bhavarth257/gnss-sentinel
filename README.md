@@ -49,64 +49,22 @@ Open the [live demo](https://bhavarth257.github.io/gnss-sentinel/), or download 
 
 GNSSSentinel sits between the rover's sensors and its position filter. It never trusts one source blindly. Instead it cross-checks GPS against the rover's own motion sensors, turns the disagreement into a trust level, and feeds that trust level into the filter.
 
-```mermaid
-flowchart LR
-    subgraph SENSORS["Onboard sensors (low cost)"]
-        GNSS["GNSS receiver<br/>position, Doppler velocity<br/>satellites, HDOP, C/N0<br/>5 Hz"]
-        WHEEL["Wheel encoders<br/>speed along the ground<br/>50 Hz"]
-        IMU["IMU<br/>gyro yaw rate<br/>accelerometer pitch<br/>50 Hz"]
-    end
+![GNSSSentinel architecture](docs/architecture.png)
 
-    subgraph DR["Dead reckoning"]
-        PROJ["Slope correction<br/>v_h = v_wheel · cos(pitch)"]
-        HEAD["Heading integration<br/>gyro minus learned bias"]
-        DRPOS["Predicted position<br/>and covariance P"]
-    end
+*Solid arrows are data flow. Dashed orange arrows are effects the simulated world has on the GNSS signal. The dashed blue arrow is the feedback loop between dead reckoning and the filter. The red arrow is the path taken when GPS is excluded. Source: [`docs/architecture.dot`](docs/architecture.dot) (Graphviz).*
 
-    subgraph MON["GNSSSentinel trust monitor"]
-        RES["Residual generator<br/>displacement · velocity<br/>heading · innovation"]
-        QUAL["Receiver quality q<br/>satellites · HDOP · C/N0"]
-        FAST["Fast term f<br/>recent obvious disagreement"]
-        SLOW["Slow term g<br/>EWMA + CUSUM drift detector"]
-        TRUST["Asymmetric trust update<br/>falls fast, recovers slowly"]
-    end
+The system has five layers:
 
-    subgraph FUSE["Position filter"]
-        KF["Kalman update<br/>R = σ² / T"]
-        GATE{"Trust below 0.2<br/>or fast term above 0.5?"}
-    end
+1. **Simulation world** (orange). The course, the terrain with its two hills, the urban block and tree cover, and the rover's true motion. The fault injector corrupts the GNSS signal on demand: it can add a position jump, a slow drift, a dropout or jamming. The hills affect the GNSS signal on their own, through sky masking and hillside multipath.
+2. **Onboard sensors** (yellow). The three low-cost sensors a small rover already carries: a GNSS receiver, wheel encoders and an IMU. Nothing extra is added.
+3. **GNSSSentinel** (blue). The contribution of this project. It works in three stages:
+   - **Dead reckoning:** tracks the rover from wheels + IMU.
+   - **Residuals:** compare GPS with that motion.
+   - **Trust update:** turns the disagreement, plus receiver quality, into a trust level T.
 
-    OUT["Outputs<br/>position estimate<br/>trust level T and state<br/>navigation mode and flags"]
-
-    WHEEL --> PROJ
-    IMU --> PROJ
-    IMU --> HEAD
-    PROJ --> DRPOS
-    HEAD --> DRPOS
-    GNSS --> RES
-    GNSS --> QUAL
-    DRPOS --> RES
-    RES --> FAST
-    RES --> SLOW
-    FAST --> TRUST
-    SLOW --> TRUST
-    QUAL --> TRUST
-    TRUST --> GATE
-    GNSS --> GATE
-    GATE -- "no: use GPS, weighted by T" --> KF
-    GATE -- "yes: exclude GPS,<br/>IMU + wheels only" --> OUT
-    DRPOS --> KF
-    KF --> OUT
-    KF -. "corrected position,<br/>heading, gyro bias" .-> DRPOS
-```
-
-There are three main blocks:
-
-| Block | Job |
-|---|---|
-| **Dead reckoning** | Tracks the rover from wheel speed and IMU alone. It is smooth and immune to GPS problems, but it slowly drifts. |
-| **Trust monitor** | Compares what GPS says with what the rover's own sensors say, and turns the disagreement into a trust level T. |
-| **Position filter** | Blends dead reckoning with GPS. The weight given to GPS scales with T, and GPS is dropped entirely when trust is very low. |
+   The **position filter** then uses GPS with noise scaled by 1/T. The **exclusion check** drops GPS entirely when trust is very low, and the rover navigates on IMU + wheels alone.
+4. **Baselines** (purple). Raw GPS, a conventional threshold gate, and IMU + wheels only. They run on exactly the same sensor data, so the comparison is fair.
+5. **Outputs and dashboard** (green). The navigation output (position, uncertainty, trust, state and navigation mode) drives the 3D view, the dashboard and the error metrics.
 
 ---
 

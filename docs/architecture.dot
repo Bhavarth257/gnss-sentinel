@@ -1,0 +1,110 @@
+// GNSSSentinel architecture. Render with:
+//   dot -Tpng -Gdpi=200 docs/architecture.dot -o docs/architecture.png
+//   dot -Tsvg docs/architecture.dot -o docs/architecture.svg
+digraph GNSSSentinel {
+  graph [rankdir=TB, fontname="Liberation Sans", fontsize=11, bgcolor="white",
+         nodesep=0.3, ranksep=0.42, pad=0.3, compound=true, newrank=true];
+  node  [shape=box, style="rounded,filled", fillcolor="white", color="#9aa4ad",
+         fontname="Liberation Sans", fontsize=10, margin="0.14,0.06", penwidth=1];
+  edge  [fontname="Liberation Sans", fontsize=8, fontcolor="#4a4f55", color="#5d6670",
+         arrowsize=0.6, penwidth=0.9];
+
+  // ---------------- Layer 1: simulated world ----------------
+  subgraph cluster_world {
+    label=<<b>Simulation world</b>     <font color="#c27a2c">(index.html core · fixed 50 Hz step · one rover)</font>>;
+    labeljust=l; fontcolor="#a8611b"; style="rounded,filled"; fillcolor="#fff4e8"; color="#f0a35c";
+
+    terrain [label=<<b>terrain + track</b><br/><font point-size="8">figure-eight, 146 m · West ridge 5.5 m<br/>East hill 4.5 m · urban block · tree cover</font>>];
+    truth   [label=<<b>rover truth</b><br/><font point-size="8">pose · speed · pitch from terrain<br/>slows on climbs and turns</font>>];
+    faults  [label=<<b>fault injector</b><br/><font point-size="8">jump · slow drift · dropout · jamming<br/>auto test plan · keys 1–4 · dashboard buttons</font>>, style="rounded,filled,dashed"];
+  }
+
+  // ---------------- Layer 2: sensors ----------------
+  subgraph cluster_sensors {
+    label=<<b>Onboard sensors</b>     <font color="#b8862a">(low-cost hardware a small rover already has)</font>>;
+    labeljust=l; fontcolor="#8a6414"; style="rounded,filled"; fillcolor="#fffbea"; color="#e3c160";
+
+    gnss  [label=<<b>GNSS receiver</b><br/><font point-size="8">position · Doppler velocity · σ<br/>satellites · HDOP · C/N0 · 5 Hz</font>>];
+    wheel [label=<<b>wheel encoders</b><br/><font point-size="8">speed along the ground<br/>1.5 % scale error · 50 Hz</font>>];
+    imu   [label=<<b>IMU</b><br/><font point-size="8">gyro yaw rate · accelerometer pitch<br/>0.14 °/s gyro bias · 50 Hz</font>>];
+  }
+
+  // ---------------- Layer 3: GNSSSentinel ----------------
+  subgraph cluster_sentinel {
+    label=<<b>GNSSSentinel</b>     <font color="#3b6db3">(runs on the rover · every GPS fix, 5 Hz)</font>>;
+    labeljust=l; fontcolor="#2a5597"; style="rounded,filled"; fillcolor="#eaf1fb"; color="#86a9da";
+
+    dr       [label=<<b>dead_reckoning</b><br/><font point-size="8">v · cos(pitch) along gyro heading<br/>learned gyro bias · covariance P</font>>];
+    residual [label=<<b>residuals</b><br/><font point-size="8">displacement (2 s) · velocity<br/>heading · innovation, in σ units</font>>];
+    quality  [label=<<b>receiver_quality</b><br/><font point-size="8">q from satellites · HDOP · C/N0</font>>];
+    fast     [label=<<b>fast_term  f</b><br/><font point-size="8">largest residual, 3σ → 6σ<br/>catches jumps, multipath</font>>];
+    slow     [label=<<b>slow_term  g</b><br/><font point-size="8">EWMA of velocity residual + CUSUM<br/>catches creeping drift</font>>];
+    trust    [label=<<b>trust_update</b><br/><font point-size="8">T* = (1 − max(f, g)) · (0.35 + 0.65 q)<br/>falls fast · recovers after 3 s agreement</font>>,
+              fillcolor="#d5e3fa", color="#3b6db3", penwidth=1.3];
+    excl     [label=<<b>exclusion check</b><br/><font point-size="8">T &lt; 0.2 or f &gt; 0.5 ?</font>>, shape=box, style="rounded,filled,dashed"];
+    kf       [label=<<b>position_filter</b><br/><font point-size="8">Kalman update, R = σ² / T<br/>position · heading · gyro bias</font>>,
+              fillcolor="#d5e3fa", color="#3b6db3", penwidth=1.3];
+  }
+
+  // ---------------- Layer 4: baselines ----------------
+  subgraph cluster_base {
+    label=<<b>Baselines</b>     <font color="#7a5cc0">(same sensor data, for comparison)</font>>;
+    labeljust=l; fontcolor="#5b3fa3"; style="rounded,filled"; fillcolor="#f2edfb"; color="#a990dc";
+
+    rawgps [label=<<b>raw GPS</b><br/><font point-size="8">receiver output, unfiltered</font>>];
+    gate   [label=<<b>threshold gate</b><br/><font point-size="8">accept fix if χ² &lt; 9.21 (99 %)<br/>no memory, yes/no only</font>>];
+    dronly [label=<<b>IMU + wheels only</b><br/><font point-size="8">dead reckoning, never corrected</font>>];
+  }
+
+  // ---------------- Layer 5: outputs ----------------
+  subgraph cluster_out {
+    label=<<b>Outputs and dashboard</b>     <font color="#3f8f4a">(browser · three.js)</font>>;
+    labeljust=l; fontcolor="#2f7a3a"; style="rounded,filled"; fillcolor="#ebf6ec"; color="#86c08d";
+
+    nav     [label=<<b>navigation output</b><br/><font point-size="8">position · 2σ uncertainty · trust T · state<br/>mode: GNSS + IMU / IMU leading / IMU + wheels</font>>,
+             fillcolor="#fffdf0", color="#b9a752"];
+    view3d  [label=<<b>3D view</b><br/><font point-size="8">terrain · rover on slope · satellites<br/>estimate markers and trails</font>>];
+    dash    [label=<<b>dashboard</b><br/><font point-size="8">trust gauge · residuals · 60 s charts<br/>fault buttons · test plan</font>>];
+    metrics [label=<<b>metrics</b><br/><font point-size="8">RMSE · max error · detection delay<br/>recovery time · false alarms · time on IMU</font>>, shape=note, fillcolor="#fffdf0", color="#b9a752"];
+  }
+
+  // world -> sensors
+  truth   -> gnss  [label="true position\nand velocity"];
+  truth   -> wheel [label="speed"];
+  truth   -> imu   [label="yaw rate · pitch"];
+  terrain -> gnss  [label="sky masking ·\nhillside multipath", style=dashed, color="#c27a2c", fontcolor="#a8611b"];
+  faults  -> gnss  [label="offset · blackout ·\nC/N0 drop", style=dashed, color="#c27a2c", fontcolor="#a8611b"];
+
+  // sensors -> GNSSSentinel
+  wheel -> dr       [label="wheel speed"];
+  imu   -> dr       [label="yaw rate · pitch"];
+  gnss  -> residual [label="fix · velocity · σ"];
+  gnss  -> quality  [label="sats · HDOP · C/N0"];
+  dr    -> residual [label="predicted motion"];
+
+  residual -> fast;
+  residual -> slow  [label="velocity\nresidual"];
+  fast     -> trust [label="f"];
+  slow     -> trust [label="g"];
+  quality  -> trust [label="q"];
+  trust    -> excl  [label="T"];
+  excl     -> kf    [label="no: use fix,\nR = σ² / T"];
+  excl     -> nav   [label="yes: exclude GPS · flag\nIMU + wheels only", color="#c0392b", fontcolor="#c0392b"];
+  dr       -> kf    [dir=both, label="prediction  ⇄\ncorrected heading\n· gyro bias", style=dashed, color="#3b6db3", fontcolor="#2a5597"];
+  kf       -> nav   [label="estimate"];
+
+  // baselines: one link in, one link out
+  gnss -> rawgps [lhead=cluster_base, label="same sensor data", style=dashed, color="#8f7cc4", fontcolor="#5b3fa3"];
+  gate -> metrics [ltail=cluster_base, label="their errors", style=dashed, color="#8f7cc4", fontcolor="#5b3fa3"];
+
+  // outputs
+  nav -> view3d;
+  nav -> dash;
+  nav -> metrics [label="error vs truth"];
+
+  { rank=same; terrain; truth; faults; }
+  { rank=same; gnss; wheel; imu; }
+  { rank=same; fast; slow; quality; }
+  { rank=same; excl; kf; }
+  { rank=same; rawgps; gate; dronly; }
+}
