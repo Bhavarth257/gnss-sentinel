@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0}</style>
+</head>
+<body>
+<title>GNSSSentinel Rover Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one-screen split. Live 3D field on the left, instrument rail on the right; stacks on phones. Single dark field-console look. */
+:root{
+  color-scheme: dark;
+  --bg:#0b1316; --panel:#0f1a1e; --raise:#152328; --line:#21353c; --fg:#dbe6e9; --muted:#81959c;
+  --truth:#f2f6f7; --gps:#f0a23b; --sen:#3dd6c8; --gate:#df5fd0; --dr:#a393ff;
+  --f-jump:#ff7a59; --f-drift:#e7b649; --f-drop:#8fa3ab; --f-jam:#ec4f50;
+  --ok:#4cc47d; --warn:#e7b649; --bad:#ec4f50;
+  --display:"Barlow Semi Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
+.app{height:100%;display:grid;grid-template-columns:minmax(0,1fr) 400px}
+.stage{position:relative;min-width:0;overflow:hidden;background:var(--bg)}
+#gl{display:block;width:100%;height:100%;outline:none}
+.rail{overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:18px 18px 28px;display:flex;flex-direction:column;gap:22px}
+
+/* overlays on the 3D stage */
+.hud{position:absolute;pointer-events:none;inset:0}
+.hud > *{pointer-events:auto}
+.brand{position:absolute;top:16px;left:16px;display:flex;flex-direction:column;gap:2px;max-width:calc(100% - 32px)}
+.brand h1{margin:0;font-family:var(--display);font-weight:700;font-size:30px;letter-spacing:.01em;line-height:1}
+.brand h1 span{color:var(--sen)}
+.brand p{margin:0;color:var(--muted);font-size:13px}
+.legend{position:absolute;left:16px;bottom:70px;display:flex;flex-direction:column;gap:5px;font-size:12px;background:color-mix(in srgb,var(--bg) 78%,transparent);border:1px solid var(--line);border-radius:6px;padding:9px 11px}
+.legend i{display:inline-block;width:18px;height:3px;border-radius:2px;margin-right:8px;vertical-align:middle}
+.legend i.dot{width:8px;height:8px;border-radius:50%;margin:0 13px 0 5px}
+.clock{position:absolute;top:16px;right:16px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.clock span{white-space:nowrap}
+.clock b{font-weight:500;color:var(--fg);font-size:18px}
+.banner{font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:4px;background:var(--raise);color:var(--muted);border:1px solid var(--line)}
+.nav{font-family:var(--mono);font-size:12px;padding:4px 10px;border-radius:4px;border:1px solid currentColor;background:color-mix(in srgb,var(--bg) 80%,transparent);color:var(--ok)}
+.banner.on{color:var(--bg);background:var(--bad);border-color:var(--bad)}
+.controls{position:absolute;left:16px;right:16px;bottom:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:color-mix(in srgb,var(--bg) 82%,transparent)}
+.seg button{border-radius:0;border:0;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+button{font:500 13px var(--body);color:var(--fg);background:color-mix(in srgb,var(--raise) 90%,transparent);border:1px solid var(--line);border-radius:6px;padding:7px 12px;cursor:pointer}
+button:hover{background:#1c2f35}
+button:focus-visible,input:focus-visible{outline:2px solid var(--sen);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.hint{color:var(--muted);font-size:12px;margin-left:auto}
+
+/* rail */
+.sec{display:flex;flex-direction:column;gap:10px}
+.sec h2{margin:0;font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.sec h2 small{font-family:var(--mono);letter-spacing:0;text-transform:none;font-size:11px;font-weight:400}
+.trust{display:grid;grid-template-columns:190px 1fr;gap:14px;align-items:center}
+.gauge{position:relative;width:190px}
+.gauge svg{display:block;width:100%;height:auto}
+.gauge .val{position:absolute;left:0;right:0;bottom:4px;text-align:center}
+.gauge .val b{display:block;font-family:var(--display);font-size:44px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.pill{display:inline-block;font-family:var(--display);font-weight:700;letter-spacing:.08em;font-size:13px;padding:3px 9px;border-radius:4px;text-transform:uppercase;color:var(--bg);background:var(--ok)}
+.terms{display:flex;flex-direction:column;gap:8px;min-width:0}
+.term{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:12px}
+.term span:first-child{color:var(--muted)}
+.term span:nth-child(2){font-family:var(--mono);font-variant-numeric:tabular-nums}
+.bar{grid-column:1 / -1;height:5px;background:var(--raise);border-radius:3px;overflow:hidden}
+.bar > div{height:100%;width:0;background:var(--sen);border-radius:3px}
+.note{font-size:12px;color:var(--muted);margin:0}
+.note b{color:var(--fg);font-weight:500}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cell{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.cell span{font-size:11px;color:var(--muted);letter-spacing:.04em}
+.cell b{font-family:var(--mono);font-weight:500;font-size:15px;font-variant-numeric:tabular-nums}
+.cell em{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+.faults{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fault{position:relative;overflow:hidden;text-align:left;padding:9px 11px;display:flex;flex-direction:column;gap:1px}
+.fault b{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:.02em}
+.fault span{font-size:11px;color:var(--muted)}
+.fault .fill{position:absolute;left:0;bottom:0;height:3px;width:0}
+.fault kbd{position:absolute;top:8px;right:9px;font:11px var(--mono);color:var(--muted)}
+.fault.active{border-color:var(--fg)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row label{font-size:13px;display:flex;gap:7px;align-items:center;cursor:pointer}
+.row input{accent-color:var(--sen)}
+.plan{position:relative;height:22px;background:var(--raise);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.plan div{position:absolute;top:0;bottom:0;font:10px var(--mono);color:var(--bg);padding:4px 4px;white-space:nowrap;overflow:hidden}
+.plan .head{width:2px;background:var(--fg);padding:0;z-index:2}
+
+canvas.chart{width:100%;height:120px;display:block;background:var(--raise);border:1px solid var(--line);border-radius:6px}
+.keys{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--muted)}
+.keys i{display:inline-block;width:12px;height:3px;margin-right:6px;vertical-align:middle;border-radius:2px}
+
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th{font-weight:500;color:var(--muted);font-size:11px;letter-spacing:.04em}
+td{font-family:var(--mono)}
+th:first-child,td:first-child{text-align:left;font-family:var(--body)}
+td:first-child i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
+tr.best td{color:var(--sen)}
+.foot{font-size:11px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px;margin:0}
+
+@media (max-width:880px){
+  html,body{height:auto}
+  .app{display:block;height:auto}
+  .stage{height:62svh;min-height:380px}
+  .rail{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  .legend{bottom:auto;top:84px}
+  .hint{display:none}
+}
+@media (max-width:420px){
+  .trust{grid-template-columns:1fr}
+  .gauge{margin:0 auto}
+  .brand h1{font-size:24px}
+  .clock b{font-size:15px}
+}
+</style>
+
+<div class="app">
+  <div class="stage">
+    <canvas id="gl" tabindex="0" aria-label="3D view of the rover, GPS fixes and position estimates"></canvas>
+    <div class="hud">
+      <div class="brand">
+        <h1>GNSS<span>Sentinel</span></h1>
+        <p>Low-cost GNSS health monitor for a small autonomous rover</p>
+      </div>
+      <div class="clock">
+        <b id="clk">00:00.0</b>
+        <span id="planTxt">Test plan · open sky</span>
+        <span class="banner" id="banner">No fault injected</span>
+        <span class="nav" id="nav">Navigating on GNSS + IMU</span>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <div><i style="background:var(--truth)"></i>Ground truth (rover)</div>
+        <div><i class="dot" style="background:var(--gps)"></i>Raw GPS fixes</div>
+        <div><i style="background:var(--sen)"></i>GNSSSentinel estimate</div>
+        <div><i style="background:var(--gate)"></i>Threshold gate (baseline)</div>
+        <div><i style="background:var(--dr)"></i>IMU + wheels only</div>
+        <div><i style="background:var(--bad)"></i>Satellite blocked by hill</div>
+      </div>
+      <div class="controls">
+        <button id="play" aria-pressed="false">Pause</button>
+        <div class="seg" role="group" aria-label="Simulation speed">
+          <button data-speed="1" aria-pressed="true">1×</button>
+          <button data-speed="2" aria-pressed="false">2×</button>
+          <button data-speed="4" aria-pressed="false">4×</button>
+        </div>
+        <div class="seg" role="group" aria-label="Camera">
+          <button data-view="chase" aria-pressed="true">Chase</button>
+          <button data-view="top" aria-pressed="false">Overview</button>
+        </div>
+        <button id="reset">Restart</button>
+        <span class="hint">Drag to orbit · scroll to zoom · Space pauses</span>
+      </div>
+    </div>
+  </div>
+
+  <aside class="rail">
+    <section class="sec">
+      <h2>GPS trust level <small>T ∈ [0, 1]</small></h2>
+      <div class="trust">
+        <div class="gauge">
+          <svg viewBox="0 0 220 122" overflow="visible" aria-hidden="true">
+            <path d="M 20 112 A 90 90 0 0 1 200 112" fill="none" stroke="var(--raise)" stroke-width="16" stroke-linecap="butt"/>
+            <path id="gArc" d="M 20 112 A 90 90 0 0 1 200 112" fill="none" stroke="var(--ok)" stroke-width="16" pathLength="100" stroke-dasharray="100 100"/>
+            <line x1="73.7" y1="40.7" x2="64.6" y2="22.9" stroke="var(--fg)" stroke-width="2"/>
+            <line x1="157.0" y1="47.3" x2="168.8" y2="31.1" stroke="var(--fg)" stroke-width="2"/>
+            <text x="61" y="16" text-anchor="end" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">0.35</text>
+            <text x="170" y="24" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">0.70</text>
+          </svg>
+          <div class="val"><b id="tVal">1.00</b><span class="pill" id="tState">Trusted</span></div>
+        </div>
+        <div class="terms">
+          <div class="term"><span>Fast term (recent disagreement)</span><span id="fVal">0.00</span><div class="bar"><div id="fBar"></div></div></div>
+          <div class="term"><span>Slow term (CUSUM drift)</span><span id="gVal">0.00</span><div class="bar"><div id="gBar"></div></div></div>
+          <div class="term"><span>Receiver quality</span><span id="qVal">1.00</span><div class="bar"><div id="qBar"></div></div></div>
+        </div>
+      </div>
+      <p class="note" id="rNote">GPS noise in the filter: <b>R × 1.0</b>. Fused position follows GPS.</p>
+    </section>
+
+    <section class="sec">
+      <h2>Inject a fault <small>keys 1–4 · 0 clears</small></h2>
+      <div class="faults">
+        <button class="fault" data-fault="jump"><kbd>1</kbd><b>Sudden jump</b><span>Position steps 8 m for 15 s</span><div class="fill"></div></button>
+        <button class="fault" data-fault="drift"><kbd>2</kbd><b>Slow ramp drift</b><span>Spoofer creeps 0.12 m/s</span><div class="fill"></div></button>
+        <button class="fault" data-fault="drop"><kbd>3</kbd><b>GPS dropout</b><span>No fix for 12 s</span><div class="fill"></div></button>
+        <button class="fault" data-fault="jam"><kbd>4</kbd><b>Jamming</b><span>C/N0 and satellites collapse</span><div class="fill"></div></button>
+      </div>
+      <div class="row">
+        <button id="clear">Clear faults</button>
+        <label><input type="checkbox" id="auto" checked> Auto-run test plan</label>
+      </div>
+      <div class="plan" id="plan" aria-label="Test plan timeline"></div>
+    </section>
+
+    <section class="sec">
+      <h2>Receiver &amp; residuals <small id="zoneTxt">open sky</small></h2>
+      <div class="grid2">
+        <div class="cell"><span>Satellites · HDOP</span><b id="rxSat">12 · 0.7</b><em id="rxFix">3D fix, 5 Hz</em></div>
+        <div class="cell"><span>C/N0</span><b id="rxCn0">45 dB-Hz</b><em>signal strength</em></div>
+        <div class="cell"><span>Terrain grade</span><b id="tgGrade">0%</b><em id="tgElev">elevation 0.0 m</em></div>
+        <div class="cell"><span>IMU pitch</span><b id="tgPitch">0.0°</b><em id="tgSky">sky clear</em></div>
+        <div class="cell"><span>Displacement residual</span><b id="rsD">0.00 m</b><em id="rsDs">GPS vs wheels, 2 s window</em></div>
+        <div class="cell"><span>Velocity residual</span><b id="rsV">0.00 m/s</b><em id="rsVs">GPS vs wheel speed</em></div>
+        <div class="cell"><span>Heading residual</span><b id="rsH">0.0°</b><em>GPS course vs gyro yaw</em></div>
+        <div class="cell"><span>Innovation</span><b id="rsI">0.00 m</b><em id="rsIs">fix vs predicted position</em></div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h2>Last 60 seconds</h2>
+      <canvas class="chart" id="chT" aria-label="Trust level over the last 60 seconds"></canvas>
+      <canvas class="chart" id="chE" aria-label="Position error over the last 60 seconds"></canvas>
+      <div class="keys">
+        <span><i style="background:var(--sen)"></i>Sentinel error</span>
+        <span><i style="background:var(--gate)"></i>Gate error</span>
+        <span><i style="background:var(--gps)"></i>Raw GPS error</span>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h2>Position error since start <small>metres</small></h2>
+      <table>
+        <thead><tr><th>Estimator</th><th>Now</th><th>RMSE</th><th>Max</th></tr></thead>
+        <tbody id="mt"></tbody>
+      </table>
+      <div class="grid2">
+        <div class="cell"><span>Detection delay</span><b id="mDet">–</b><em id="mDetS">time until T &lt; 0.5</em></div>
+        <div class="cell"><span>Recovery time</span><b id="mRec">–</b><em id="mRecS">fault end until T &gt; 0.7</em></div>
+        <div class="cell"><span>Hill IMU takeovers</span><b id="mHill">0</b><em>GPS dropped on a climb</em></div>
+        <div class="cell"><span>Time on IMU + wheels</span><b id="mImu">0 s</b><em id="mImuS">0% of run</em></div>
+        <div class="cell"><span>False alarms</span><b id="mFa">0</b><em>T &lt; 0.5 with no cause</em></div>
+        <div class="cell"><span>Gate rejections</span><b id="mGr">0</b><em>fixes outside 99% gate</em></div>
+      </div>
+    </section>
+
+    <p class="foot">Simulated sensors, terrain and faults, built to illustrate the method in the GNSSSentinel proposal. These are not field logs. On the two hills the slope blocks part of the sky and hillside reflections bias the fix; the receiver does not report that bias, so the trust monitor has to catch it. Noise, bias and fault magnitudes are modelled on a low-cost receiver, wheel encoders and a MEMS IMU.</p>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// CORE-START
+// Simulation core: truth, sensors, GNSS faults, trust monitor and three estimators. No DOM here.
+const TAU = Math.PI * 2;
+const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+function rng(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function gaussFrom(r) { let u = 0; while (!u) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * r()); }
+
+// Figure-eight test track, resampled to uniform arc length.
+const TRACK = (() => {
+  const N = 6000, raw = [];
+  for (let i = 0; i <= N; i++) { const u = i / N * TAU; raw.push([24 * Math.sin(u), 12 * Math.sin(2 * u)]); }
+  const cum = [0];
+  for (let i = 1; i <= N; i++) cum.push(cum[i - 1] + Math.hypot(raw[i][0] - raw[i - 1][0], raw[i][1] - raw[i - 1][1]));
+  const L = cum[N], M = Math.round(L / 0.1), ds = L / M;
+  const X = new Float64Array(M), Y = new Float64Array(M), H = new Float64Array(M), K = new Float64Array(M);
+  let j = 0;
+  for (let i = 0; i < M; i++) {
+    const s = i * ds;
+    while (cum[j + 1] < s) j++;
+    const f = (s - cum[j]) / (cum[j + 1] - cum[j]);
+    X[i] = raw[j][0] + f * (raw[j + 1][0] - raw[j][0]);
+    Y[i] = raw[j][1] + f * (raw[j + 1][1] - raw[j][1]);
+  }
+  for (let i = 0; i < M; i++) {
+    const a = (i - 1 + M) % M, b = (i + 1) % M;
+    H[i] = Math.atan2(Y[b] - Y[a], X[b] - X[a]);
+  }
+  for (let i = 0; i < M; i++) K[i] = wrap(H[(i + 1) % M] - H[(i - 1 + M) % M]) / (2 * ds);
+  return {
+    X, Y, H, K, L, M, ds,
+    at(s) {
+      s = ((s % L) + L) % L;
+      const f = s / ds, i = Math.floor(f) % M, i2 = (i + 1) % M, a = f - Math.floor(f);
+      return { x: X[i] + a * (X[i2] - X[i]), y: Y[i] + a * (Y[i2] - Y[i]), h: wrap(H[i] + a * wrap(H[i2] - H[i])), k: K[i] };
+    }
+  };
+})();
+
+const URBAN = { x: 18, y: -8, r0: 4.5, r1: 9.5 };   // urban canyon: multipath, few satellites
+const TREES = { x: -18, y: 8, r0: 4, r1: 9 };       // tree cover: attenuation
+const zone = (z, x, y) => smooth(z.r1, z.r0, Math.hypot(x - z.x, y - z.y));
+
+// Terrain: two hills the route climbs over (a = height in m, s = spread in m), plus scenery hills far from the track
+const HILLS = [ { x: -17, y: -9, a: 5.5, s: 7, name: 'West ridge' }, { x: 17, y: 9, a: 4.5, s: 6.5, name: 'East hill' } ];
+const SCENERY = [ { x: -50, y: 36, a: 16, s: 13 }, { x: 54, y: -40, a: 20, s: 15 }, { x: 8, y: 64, a: 12, s: 12 }, { x: -66, y: -30, a: 14, s: 14 }, { x: 68, y: 22, a: 11, s: 12 } ];
+const ALL_HILLS = HILLS.concat(SCENERY);
+function elev(x, y) {
+  let h = 0;
+  for (const k of ALL_HILLS) h += k.a * Math.exp(-((x - k.x) ** 2 + (y - k.y) ** 2) / (2 * k.s * k.s));
+  return h;
+}
+function slopeAt(x, y) { const e = 0.25; return { gx: (elev(x + e, y) - elev(x - e, y)) / (2 * e), gy: (elev(x, y + e) - elev(x, y - e)) / (2 * e) }; }
+
+const FAULTS = {
+  jump:  { name: 'Sudden jump', dur: 15 },
+  drift: { name: 'Slow ramp drift', dur: 35 },
+  drop:  { name: 'GPS dropout', dur: 12 },
+  jam:   { name: 'Jamming', dur: 16 },
+};
+const PLAN = [ { t: 20, type: 'jump' }, { t: 55, type: 'drift' }, { t: 118, type: 'drop' }, { t: 150, type: 'jam' } ];
+const PLAN_LEN = 195;
+const GPS_DT = 0.2;
+
+// Heading correction from GPS course, weighted by trust; also learns the gyro bias while GPS is trusted.
+function course(e, dh, w) {
+  e.h = wrap(e.h + 0.08 * w * dh);
+  e.b = clamp(e.b - 0.0004 * w * dh, -0.01, 0.01);
+  e.sh = Math.max(0.01, e.sh - 0.004 * w);
+}
+
+class Sim {
+  constructor(seed = 11) { this.seed = seed; this.auto = true; this.reset(); }
+  reset() {
+    this.r = rng(this.seed); this.rf = rng(this.seed * 7 + 3);
+    this.g = () => gaussFrom(this.r);
+    this.t = 0; this.s = 0; this.v = 1.2; this.vw = 0; this.planPhase = -1;
+    this.mask = 0; this.imuPitch = 0; this.imuTime = 0; this.hillTakeovers = 0; this.wasImu = false;
+    const p = TRACK.at(0);
+    this.truth = { x: p.x, y: p.y, h: p.h, v: 0, w: 0, z: elev(p.x, p.y), pitch: 0, grade: 0 };
+    const mk = () => ({ x: p.x, y: p.y, h: p.h, P: 0.05, b: 0, sh: 0.02 });
+    this.sen = mk(); this.gate = mk(); this.dr = mk();
+    this.gpsT = 0; this.fix = null; this.fixes = []; this.gm = { x: 0, y: 0 }; this.jam = 0;
+    this.faults = [];
+    this.rx = { sats: 12, cn0: 45, hdop: 0.7, urb: 0, tre: 0 };
+    this.mon = { T: 1, Tstar: 1, fs: 0, f: 0, g: 0, S: 0, q: 1, mv: { x: 0, y: 0 }, hold: 0,
+                 rd: 0, rdm: 0, rv: 0, rvm: 0, rh: 0, ri: 0, rim: 0, excluded: false, state: 'trusted' };
+    this.drAcc = { x: 0, y: 0 }; this.hist = [];
+    this.err = { sen: 0, gate: 0, dr: 0, gps: 0 };
+    this.stats = {}; for (const k of ['gps', 'gate', 'sen', 'dr']) this.stats[k] = { ss: 0, n: 0, max: 0 };
+    this.series = [];
+    this.pending = []; this.lastDet = null; this.recov = null; this.lastRec = null;
+    this.falseAlarms = 0; this.gateRejects = 0; this.belowHalf = false; this.lastFaultEnd = -1e9;
+  }
+  inject(type) {
+    this.clear(type);
+    const ang = this.rf() * TAU, f = { type, t0: this.t, dur: FAULTS[type].dur, dx: Math.cos(ang), dy: Math.sin(ang), ended: false };
+    this.faults.push(f);
+    if (type !== 'drop') this.pending.push({ type, t0: this.t, f });
+    return f;
+  }
+  clear(type) {
+    for (const f of this.faults) if (!f.ended && (!type || f.type === type) && this.t < f.t0 + f.dur) f.dur = Math.max(0.01, this.t - f.t0);
+  }
+  activeFault(type) { return this.faults.find(f => f.type === type && this.t >= f.t0 && this.t < f.t0 + f.dur); }
+  anyActive() { return this.faults.some(f => this.t >= f.t0 && this.t < f.t0 + f.dur); }
+  offset() {
+    let x = 0, y = 0, vx = 0, vy = 0;
+    const j = this.activeFault('jump'); if (j) { x += 8 * j.dx; y += 8 * j.dy; }
+    const d = this.activeFault('drift'); if (d) { const k = 0.12 * (this.t - d.t0); x += k * d.dx; y += k * d.dy; vx += 0.12 * d.dx; vy += 0.12 * d.dy; }
+    return { x, y, vx, vy };
+  }
+
+  step(dt) {
+    this.t += dt;
+    // test plan
+    if (this.auto) {
+      const ph = this.t % PLAN_LEN;
+      for (const p of PLAN) if (this.planPhase < p.t && ph >= p.t) this.inject(p.type);
+      this.planPhase = ph < this.planPhase ? -1 : ph;
+    }
+    // fault end bookkeeping
+    for (const f of this.faults) if (!f.ended && this.t >= f.t0 + f.dur) {
+      f.ended = true; this.lastFaultEnd = this.t; this.recov = { type: f.type, t1: this.t };
+      const pi = this.pending.findIndex(p => p.f === f);
+      if (pi >= 0) { this.lastDet = { type: f.type, delay: null }; this.pending.splice(pi, 1); }
+    }
+    this.faults = this.faults.filter(f => f.t0 + f.dur > this.t - 75);
+
+    // ground truth
+    const k = Math.abs(TRACK.at(this.s).k);
+    const ah = TRACK.at(this.s + 0.6), bh = TRACK.at(this.s - 0.6);
+    const grade = (elev(ah.x, ah.y) - elev(bh.x, bh.y)) / 1.2;
+    const vt = clamp(2.3 / (1 + 5 * k), 0.9, 2.3) * (1 - 0.9 * Math.max(0, grade) - 0.4 * Math.max(0, -grade));
+    this.v += (vt - this.v) * Math.min(1, dt * 1.5);   // speed along the ground surface
+    const pitch = Math.atan(grade);
+    const T = this.truth, hPrev = T.h;
+    this.s += this.v * Math.cos(pitch) * dt;
+    const p = TRACK.at(this.s);
+    T.x = p.x; T.y = p.y; T.h = p.h; T.v = this.v * Math.cos(pitch); T.w = wrap(p.h - hPrev) / dt;
+    T.z = elev(p.x, p.y); T.pitch = pitch; T.grade = grade;
+
+    // wheel encoders (1.5% scale error) measure distance along the slope; the IMU's pitch projects it
+    // onto the horizontal. MEMS gyro bias 0.14 deg/s.
+    this.imuPitch = pitch + 0.006 * this.g();
+    const vw = (this.v * 1.015 + 0.03 * this.g()) * Math.cos(this.imuPitch);
+    const wz = T.w + 0.0025 + 0.01 * this.g();
+    this.vw = vw;
+    for (const e of [this.sen, this.gate, this.dr]) {
+      e.h = wrap(e.h + (wz - e.b) * dt);
+      e.sh = Math.min(0.5, e.sh + 0.0015 * dt);
+      e.x += vw * Math.cos(e.h) * dt; e.y += vw * Math.sin(e.h) * dt;
+      e.P += 0.02 * Math.abs(vw) * dt + 0.0005 * dt;
+    }
+    this.drAcc.x += vw * Math.cos(this.sen.h) * dt; this.drAcc.y += vw * Math.sin(this.sen.h) * dt;
+
+    const jamOn = !!this.activeFault('jam');
+    this.jam += ((jamOn ? 1 : 0) - this.jam) * Math.min(1, dt / 2.5);
+
+    this.gpsT += dt;
+    if (this.gpsT >= GPS_DT) { this.gpsT -= GPS_DT; this.epoch(GPS_DT); }
+
+    const E = this.err;
+    E.sen = Math.hypot(this.sen.x - T.x, this.sen.y - T.y);
+    E.gate = Math.hypot(this.gate.x - T.x, this.gate.y - T.y);
+    E.dr = Math.hypot(this.dr.x - T.x, this.dr.y - T.y);
+  }
+
+  epoch(dt) {
+    const T = this.truth, g = this.g, M = this.mon;
+    const urb = zone(URBAN, T.x, T.y), tre = zone(TREES, T.x, T.y), jam = this.jam;
+    // on a steep hillside the hill itself blocks part of the sky
+    const sl = slopeAt(T.x, T.y), steep = Math.hypot(sl.gx, sl.gy);
+    this.mask += (clamp((steep - 0.2) / 0.14, 0, 1) - this.mask) * 0.3;
+    const hill = this.mask;
+    const sats = clamp(Math.round(12.5 - 6 * urb - 3 * tre - 8.5 * hill - 10 * jam + 0.6 * g()), 0, 14);
+    const cn0 = 45 - 12 * urb - 7 * tre - 12 * hill - 22 * jam + 0.8 * g();
+    const hdop = 0.7 + 1.5 * urb + 0.5 * tre + 2.2 * hill + 3 * jam + 0.08 * Math.abs(g());
+    const sigma = 0.4 * hdop * (1 + 0.8 * urb + 0.3 * tre + 0.5 * hill + 3 * jam);
+    // slowly varying (Gauss-Markov) error in unit form, scaled by the current noise level
+    const a = Math.exp(-dt / 15), bq = Math.sqrt(1 - a * a);
+    this.gm.x = a * this.gm.x + bq * g(); this.gm.y = a * this.gm.y + bq * g();
+    this.rx = { sats, cn0, hdop, urb, tre, hill, steep, sigma };
+
+    if (this.activeFault('drop') || sats < 4) { this.fix = null; this.noFix(dt); this.record(); return; }
+
+    const off = this.offset(), wn = 0.5 * sigma;
+    // hillside multipath: reflections pull the fix downhill, and the receiver does not report it
+    const mpA = Math.atan2(-sl.gy, -sl.gx) + 0.5 * Math.sin(this.t * 0.4);
+    off.x += 3.2 * hill * Math.cos(mpA); off.y += 3.2 * hill * Math.sin(mpA);
+    const sv = 0.05 * (1 + 3 * urb + tre + 2 * hill + 6 * jam);
+    const fix = {
+      t: this.t, sigma, sv, sats, cn0, hdop,
+      x: T.x + 0.7 * sigma * this.gm.x + wn * g() + off.x, y: T.y + 0.7 * sigma * this.gm.y + wn * g() + off.y,
+      vx: T.v * Math.cos(T.h) + sv * g() + off.vx, vy: T.v * Math.sin(T.h) + sv * g() + off.vy,
+    };
+    this.fix = fix; this.fixes.push(fix); if (this.fixes.length > 60) this.fixes.shift();
+    this.monitor(fix, dt);
+    this.fuse(fix);
+    this.record();
+  }
+
+  noFix(dt) {
+    const M = this.mon;
+    M.T *= Math.exp(-dt / 6); M.hold = 0; this.hist = [];
+    M.excluded = true; M.state = 'nofix';
+  }
+
+  monitor(fix, dt) {
+    const M = this.mon, e = this.sen;
+    // 1. displacement: GPS vs wheel/IMU dead reckoning over a 2 s window
+    this.hist.push({ t: fix.t, gx: fix.x, gy: fix.y, dx: this.drAcc.x, dy: this.drAcc.y });
+    while (this.hist.length > 1 && fix.t - this.hist[0].t > 2.0001) this.hist.shift();
+    const h0 = this.hist[0];
+    M.rd = 0; M.rdm = 0;
+    if (fix.t - h0.t > 1.5) {
+      const W = fix.t - h0.t;
+      const ex = (fix.x - h0.gx) - (this.drAcc.x - h0.dx), ey = (fix.y - h0.gy) - (this.drAcc.y - h0.dy);
+      const sd = Math.sqrt((0.8 * fix.sigma) ** 2 + (this.vw * W * (0.02 + e.sh)) ** 2 + 0.05 ** 2);
+      M.rdm = Math.hypot(ex, ey); M.rd = M.rdm / sd;
+    }
+    // 2. velocity: GPS Doppler vs wheel speed along gyro heading
+    const dvx = fix.vx - this.vw * Math.cos(e.h), dvy = fix.vy - this.vw * Math.sin(e.h);
+    const sv = Math.sqrt(fix.sv ** 2 + 0.03 ** 2 + (this.vw * (0.015 + e.sh)) ** 2);
+    M.rvm = Math.hypot(dvx, dvy); M.rv = M.rvm / sv;
+    // 3. heading: GPS course over ground vs integrated yaw
+    const sp = Math.hypot(fix.vx, fix.vy);
+    M.rh = sp > 0.5 ? wrap(Math.atan2(fix.vy, fix.vx) - e.h) : 0;
+    // 4. innovation against the fused prediction
+    const si = Math.sqrt(e.P + fix.sigma ** 2);
+    M.rim = Math.hypot(fix.x - e.x, fix.y - e.y); M.ri = M.rim / si;
+
+    // fast term: recent, obvious disagreement
+    M.fs = 0.6 * M.fs + 0.4 * Math.max(M.rd, M.rv, M.ri);
+    M.f = clamp((M.fs - 3) / 3, 0, 1);
+    // slow term: EWMA of the velocity residual vector, accumulated by a one-sided CUSUM
+    const beta = 0.04;
+    M.mv.x = (1 - beta) * M.mv.x + beta * dvx; M.mv.y = (1 - beta) * M.mv.y + beta * dvy;
+    const smv = Math.sqrt(sv * sv * beta / (2 - beta) + 0.035 ** 2 + (this.vw * e.sh) ** 2);
+    const zs = Math.hypot(M.mv.x, M.mv.y) / smv;
+    M.S = clamp(M.S + zs - 1.7, 0, 24);
+    M.g = clamp(M.S / 12, 0, 1);
+    // receiver quality as supporting evidence
+    const qs = clamp((fix.sats - 4) / 6, 0, 1), qh = clamp((4 - fix.hdop) / 3, 0, 1), qc = clamp((fix.cn0 - 24) / 16, 0, 1);
+    M.q = Math.cbrt(qs * qh * qc);
+    M.Tstar = (1 - Math.max(M.f, M.g)) * (0.35 + 0.65 * M.q);
+    // asymmetric update: fall fast, recover slowly after sustained agreement
+    const agree = M.f < 0.05 && M.g < 0.05;
+    M.hold = agree ? M.hold + dt : 0;
+    if (M.Tstar < M.T) M.T += 0.7 * (M.Tstar - M.T);
+    else if (M.hold >= 3) M.T += 0.035 * (M.Tstar - M.T);
+    M.T = clamp(M.T, 0, 1);
+    M.excluded = M.T < 0.2 || M.f > 0.5;
+    M.state = M.T >= 0.7 ? 'trusted' : M.T >= 0.35 ? 'degraded' : 'untrusted';
+  }
+
+  fuse(fix) {
+    const M = this.mon, e = this.sen;
+    if (!M.excluded) {
+      const R = fix.sigma ** 2 / Math.max(M.T, 0.05);    // measurement noise scaled by 1/T
+      const K = e.P / (e.P + R);
+      e.x += K * (fix.x - e.x); e.y += K * (fix.y - e.y); e.P *= 1 - K;
+      if (Math.hypot(fix.vx, fix.vy) > 0.6) course(e, M.rh, M.T);
+    }
+    // baseline: chi-square innovation gate at 99%, no memory
+    const G = this.gate, R2 = fix.sigma ** 2;
+    const ix = fix.x - G.x, iy = fix.y - G.y;
+    if ((ix * ix + iy * iy) / (G.P + R2) < 9.21) {
+      const K = G.P / (G.P + R2);
+      G.x += K * ix; G.y += K * iy; G.P *= 1 - K;
+      if (Math.hypot(fix.vx, fix.vy) > 0.6) course(G, wrap(Math.atan2(fix.vy, fix.vx) - G.h), 1);
+    } else this.gateRejects++;
+  }
+
+  record() {
+    const T = this.truth, M = this.mon, fix = this.fix;
+    this.err.gps = fix ? Math.hypot(fix.x - T.x, fix.y - T.y) : NaN;
+    const E = { sen: Math.hypot(this.sen.x - T.x, this.sen.y - T.y), gate: Math.hypot(this.gate.x - T.x, this.gate.y - T.y),
+                dr: Math.hypot(this.dr.x - T.x, this.dr.y - T.y), gps: this.err.gps };
+    for (const k in E) if (!isNaN(E[k])) { const s = this.stats[k]; s.ss += E[k] ** 2; s.n++; s.max = Math.max(s.max, E[k]); }
+    this.series.push({ t: this.t, T: M.T, sen: E.sen, gate: E.gate, gps: E.gps });
+    while (this.series.length && this.series[0].t < this.t - 62) this.series.shift();
+
+    // detection delay, recovery time, false alarms
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const p = this.pending[i];
+      if (M.T < 0.5) { this.lastDet = { type: p.type, delay: this.t - p.t0 }; this.pending.splice(i, 1); }
+    }
+    if (this.recov && !this.anyActive() && M.T > 0.7) { this.lastRec = { type: this.recov.type, time: this.t - this.recov.t1 }; this.recov = null; }
+    const below = M.T < 0.5;
+    const envCause = this.mask > 0.15 || this.rx.urb > 0.4 || this.jam > 0.2;
+    if (below && !this.belowHalf && !this.anyActive() && !envCause && this.t - this.lastFaultEnd > 20) this.falseAlarms++;
+    this.belowHalf = below;
+    const imu = M.excluded || M.state === 'nofix';
+    if (imu && !this.wasImu && this.mask > 0.3 && this.t - (this.lastTakeover ?? -1e9) > 10) { this.hillTakeovers++; this.lastTakeover = this.t; }
+    this.wasImu = imu;
+    if (imu) this.imuTime += GPS_DT;
+  }
+}
+// CORE-END
+
+// ===== 3D scene and dashboard =====
+const sim = new Sim(11);
+const rootCss = getComputedStyle(document.documentElement);
+const tok = n => rootCss.getPropertyValue(n).trim();
+const C = {};
+for (const n of ['bg', 'fg', 'muted', 'line', 'raise', 'truth', 'gps', 'sen', 'gate', 'dr', 'ok', 'warn', 'bad', 'f-jump', 'f-drift', 'f-drop', 'f-jam']) C[n] = tok('--' + n);
+const FCOL = { jump: C['f-jump'], drift: C['f-drift'], drop: C['f-drop'], jam: C['f-jam'] };
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const V = (x, y, h = 0) => new THREE.Vector3(x, h, -y);   // sim (x, y) on the ground -> three.js (x, up, -y)
+
+const stage = document.querySelector('.stage');
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(C.bg);
+scene.fog = new THREE.Fog(C.bg, 70, 170);
+const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 500);
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.47; controls.minDistance = 5; controls.maxDistance = 130;
+
+scene.add(new THREE.HemisphereLight(0xcfe3ea, 0x15231b, 0.8));
+const sun = new THREE.DirectionalLight(0xfff2e0, 0.85);
+sun.position.set(28, 48, 20); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, near: 1, far: 140 });
+sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun);
+
+// terrain: height from elev(), tinted by height, slope and zone
+{
+  const geo = new THREE.PlaneGeometry(320, 320, 320, 320); geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
+  const grass = new THREE.Color(0x18291f), high = new THREE.Color(0x4a5a30), rock = new THREE.Color(0x5c5642), asphalt = new THREE.Color(0x242e34), forest = new THREE.Color(0x10281a);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = -pos.getZ(i), h = elev(x, y), sl = slopeAt(x, y);
+    pos.setY(i, h);
+    c.copy(grass).lerp(high, clamp(h / 10, 0, 1)).lerp(rock, clamp((Math.hypot(sl.gx, sl.gy) - 0.15) * 2.5, 0, 0.8));
+    c.lerp(asphalt, smooth(URBAN.r1 + 1.5, URBAN.r0, Math.hypot(x - URBAN.x, y - URBAN.y)));
+    c.lerp(forest, smooth(TREES.r1 + 1.5, TREES.r0, Math.hypot(x - TREES.x, y - TREES.y)));
+    const band = h > 0.3 ? smooth(0.14, 0, Math.abs((h / 0.75) % 1 - 0.5) < 0.5 ? 0.5 - Math.abs((h / 0.75) % 1 - 0.5) : 0) : 0;   // 0.75 m contour lines
+    c.lerp(new THREE.Color(0x8fae84), band * 0.35);
+    const n = (Math.sin(x * 1.7 + y * 0.3) * Math.cos(y * 1.3 - x * 0.2)) * 0.012;
+    col.set([c.r + n, c.g + n, c.b + n], i * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); geo.computeVertexNormals();
+  const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
+  terrain.receiveShadow = true; scene.add(terrain);
+  // survey grid draped over the terrain, 2 m spacing
+  const pts = [];
+  for (let a = -60; a <= 60; a += 2) for (let b = -60; b < 60; b += 0.5) {
+    pts.push(a, elev(a, -b) + 0.04, b, a, elev(a, -(b + 0.5)) + 0.04, b + 0.5);
+    pts.push(b, elev(b, -a) + 0.04, a, b + 0.5, elev(b + 0.5, -a) + 0.04, a);
+  }
+  const gg = new THREE.BufferGeometry(); gg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color: 0x3f6a60, transparent: true, opacity: 0.22 })));
+}
+const onGround = (x, y, up = 0) => V(x, y, elev(x, y) + up);
+
+// road ribbon along the track (the two passes through the crossing sit at slightly different heights)
+{
+  const M = TRACK.M, w = 0.95, pos = new Float32Array((M + 1) * 6), idx = [];
+  for (let i = 0; i <= M; i++) {
+    const k = i % M, x = TRACK.X[k], y = TRACK.Y[k], h = TRACK.H[k], nx = -Math.sin(h), ny = Math.cos(h);
+    const yy = 0.07 + 0.012 * Math.cos(TAU * k / M);
+    pos.set([x + nx * w, elev(x + nx * w, y + ny * w) + yy, -(y + ny * w), x - nx * w, elev(x - nx * w, y - ny * w) + yy, -(y - ny * w)], i * 6);
+    if (i < M) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  const road = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x33424a, roughness: 0.95, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  road.receiveShadow = true; scene.add(road);
+}
+
+const lr = rng(5);
+function trackDist(x, y) { let m = 1e9; for (let i = 0; i < TRACK.M; i += 4) m = Math.min(m, Math.hypot(TRACK.X[i] - x, TRACK.Y[i] - y)); return m; }
+
+// urban canyon: buildings with lit windows
+function windowTexture() {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 128;
+  const x = c.getContext('2d'); x.fillStyle = '#26333b'; x.fillRect(0, 0, 64, 128);
+  for (let r = 0; r < 16; r++) for (let q = 0; q < 8; q++) {
+    const lit = lr() < 0.33; x.fillStyle = lit ? (lr() < 0.6 ? '#f1d28a' : '#bfe0f5') : '#182227';
+    x.fillRect(q * 8 + 2, r * 8 + 2, 4, 5);
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+const winTex = windowTexture();
+const roofMat = new THREE.MeshStandardMaterial({ color: 0x34424a, roughness: 0.9 });
+const placed = [];
+for (let tries = 0; tries < 400 && placed.length < 24; tries++) {
+  const ang = lr() * TAU, rad = Math.sqrt(lr()) * (URBAN.r1 + 3);
+  const x = URBAN.x + Math.cos(ang) * rad, y = URBAN.y + Math.sin(ang) * rad;
+  const w = 2.6 + lr() * 3, d = 2.6 + lr() * 3, h = 5 + lr() * 12;
+  if (trackDist(x, y) < Math.max(w, d) * 0.72 + 1.5) continue;
+  if (placed.some(p => Math.hypot(p.x - x, p.y - y) < (Math.max(w, d) + p.s) * 0.62)) continue;
+  placed.push({ x, y, s: Math.max(w, d) });
+  const tex = winTex.clone(); tex.needsUpdate = true; tex.repeat.set(w / 6, h / 12);
+  const side = new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.28, roughness: 0.8 });
+  const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [side, side, roofMat, roofMat, side, side]);
+  b.position.copy(onGround(x, y, h / 2 - 0.3)); b.rotation.y = (lr() - 0.5) * 0.3; b.castShadow = b.receiveShadow = true; scene.add(b);
+}
+
+// tree cover, plus scattered trees around the field
+const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: 1 });
+const leafMats = [0x2f6b3c, 0x3a7a42, 0x285c35].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, flatShading: true }));
+function tree(x, y, s) {
+  const g = new THREE.Group();
+  const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * s, 0.18 * s, 1.6 * s, 6), trunkMat); tr.position.y = 0.8 * s; tr.castShadow = true; g.add(tr);
+  const cn = new THREE.Mesh(new THREE.IcosahedronGeometry(1.1 * s, 0), leafMats[Math.floor(lr() * 3)]); cn.position.y = 2.1 * s; cn.castShadow = true; g.add(cn);
+  const c2 = new THREE.Mesh(new THREE.IcosahedronGeometry(0.75 * s, 0), leafMats[Math.floor(lr() * 3)]); c2.position.set(0.3 * s, 2.9 * s, 0.1 * s); c2.castShadow = true; g.add(c2);
+  g.position.copy(onGround(x, y, -0.1)); g.rotation.y = lr() * TAU; scene.add(g);
+}
+for (let n = 0, tries = 0; n < 34 && tries < 500; tries++) {
+  const ang = lr() * TAU, rad = Math.sqrt(lr()) * (TREES.r1 + 2);
+  const x = TREES.x + Math.cos(ang) * rad, y = TREES.y + Math.sin(ang) * rad;
+  if (trackDist(x, y) < 1.9) continue; tree(x, y, 0.9 + lr() * 0.7); n++;
+}
+for (let n = 0; n < 70; n++) {
+  const ang = lr() * TAU, rad = 34 + lr() * 40;
+  tree(Math.cos(ang) * rad, Math.sin(ang) * rad * 0.8, 0.9 + lr() * 0.9);
+}
+
+// emitter mast used by the spoofing and jamming faults
+const EMIT = { x: -34, y: -22 };
+{
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.45, 8, 6), new THREE.MeshStandardMaterial({ color: 0x59656b, roughness: 0.6 }));
+  mast.position.copy(onGround(EMIT.x, EMIT.y, 4)); mast.castShadow = true; scene.add(mast);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.6), new THREE.MeshStandardMaterial({ color: 0x3a4549 }));
+  box.position.copy(onGround(EMIT.x, EMIT.y, 8.1)); scene.add(box);
+}
+const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 12), new THREE.MeshBasicMaterial({ color: C.muted }));
+beacon.position.copy(onGround(EMIT.x, EMIT.y, 8.7)); scene.add(beacon);
+const waves = [0, 1, 2].map(() => {
+  const m = new THREE.Mesh(new THREE.RingGeometry(0.985, 1, 128), new THREE.MeshBasicMaterial({ color: C.bad, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.copy(onGround(EMIT.x, EMIT.y, 0.3)); scene.add(m); return m;
+});
+
+// rover (the ground truth)
+const rover = new THREE.Group(); scene.add(rover);
+const mk = (geo, color, opt = {}) => new THREE.Mesh(geo, new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.55 }, opt)));
+{
+  const body = mk(new THREE.BoxGeometry(1.9, 0.45, 1.15), 0xe4e9eb); body.position.y = 0.66; body.castShadow = true; rover.add(body);
+  const stripe = mk(new THREE.BoxGeometry(1.93, 0.08, 1.18), C.sen); stripe.position.y = 0.56; rover.add(stripe);
+  const deck = mk(new THREE.BoxGeometry(1.0, 0.22, 0.86), 0x2a363c); deck.position.set(-0.2, 1.0, 0); deck.castShadow = true; rover.add(deck);
+  const eye = mk(new THREE.BoxGeometry(0.14, 0.2, 0.56), 0x1a2226, { emissive: C.sen, emissiveIntensity: 0.6 }); eye.position.set(0.98, 0.72, 0); rover.add(eye);
+  const mast = mk(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 8), 0x9aa6ab); mast.position.set(-0.45, 1.55, 0); rover.add(mast);
+}
+const puckMat = new THREE.MeshStandardMaterial({ color: 0x20292d, emissive: C.ok, emissiveIntensity: 1 });
+const puck = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.09, 24), puckMat); puck.position.set(-0.45, 2.04, 0); rover.add(puck);
+const wheels = [];
+{
+  const wg = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 20); wg.rotateX(Math.PI / 2);
+  const wm = new THREE.MeshStandardMaterial({ color: 0x1b2226, roughness: 0.9 });
+  const hub = new THREE.BoxGeometry(0.42, 0.08, 0.28);
+  for (const [x, z] of [[0.62, 0.68], [0.62, -0.68], [-0.62, 0.68], [-0.62, -0.68]]) {
+    const w = new THREE.Mesh(wg, wm); w.position.set(x, 0.34, z); w.castShadow = true;
+    w.add(new THREE.Mesh(hub, new THREE.MeshStandardMaterial({ color: 0x5c676c })));
+    rover.add(w); wheels.push(w);
+  }
+}
+const haloMat = new THREE.MeshBasicMaterial({ color: C.ok, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+const halo = new THREE.Mesh(new THREE.RingGeometry(1.55, 1.75, 64), haloMat); halo.rotation.x = -Math.PI / 2; halo.position.y = 0.08; rover.add(halo);
+
+// estimate markers: a floating diamond on a stalk
+function marker(color, size) {
+  const g = new THREE.Group();
+  const d = new THREE.Mesh(new THREE.OctahedronGeometry(size), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.55, roughness: 0.4 }));
+  d.position.y = 2.7; g.add(d);
+  const stalk = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.05, 0), new THREE.Vector3(0, 2.7, 0)]), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 }));
+  g.add(stalk); g.userData.d = d; scene.add(g); return g;
+}
+const mSen = marker(C.sen, 0.36), mGate = marker(C.gate, 0.3), mDr = marker(C.dr, 0.26);
+const gpsPin = new THREE.Group(); scene.add(gpsPin);
+{
+  const s = new THREE.Mesh(new THREE.SphereGeometry(0.3, 18, 12), new THREE.MeshStandardMaterial({ color: C.gps, emissive: C.gps, emissiveIntensity: 0.7 })); s.position.y = 2.2; gpsPin.add(s);
+  gpsPin.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.05, 0), new THREE.Vector3(0, 2.2, 0)]), new THREE.LineBasicMaterial({ color: C.gps, transparent: true, opacity: 0.7 })));
+}
+const discMat = new THREE.MeshBasicMaterial({ color: C.sen, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 64), discMat); disc.rotation.x = -Math.PI / 2; scene.add(disc);
+const discEdge = new THREE.Mesh(new THREE.RingGeometry(0.97, 1, 64), new THREE.MeshBasicMaterial({ color: C.sen, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+discEdge.rotation.x = -Math.PI / 2; scene.add(discEdge);
+const linkGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+const linkMat = new THREE.LineDashedMaterial({ color: C.gps, dashSize: 0.35, gapSize: 0.25, transparent: true });
+const link = new THREE.Line(linkGeo, linkMat); scene.add(link);
+
+// trails
+class Trail {
+  constructor(color, max, y, opacity) {
+    this.max = max; this.y = y; this.n = 0; this.arr = new Float32Array(max * 3);
+    this.geo = new THREE.BufferGeometry(); this.geo.setAttribute('position', new THREE.BufferAttribute(this.arr, 3));
+    this.line = new THREE.Line(this.geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity })); this.line.frustumCulled = false; scene.add(this.line);
+  }
+  push(x, y) {
+    if (this.n === this.max) { this.arr.copyWithin(0, 3); this.n--; }
+    this.arr.set([x, elev(x, y) + this.y, -y], this.n * 3); this.n++;
+    this.geo.setDrawRange(0, this.n); this.geo.attributes.position.needsUpdate = true;
+  }
+  clear() { this.n = 0; this.geo.setDrawRange(0, 0); }
+}
+const trails = { truth: new Trail(C.truth, 900, 0.09, 0.55), sen: new Trail(C.sen, 900, 0.13, 0.95), gate: new Trail(C.gate, 900, 0.11, 0.85), dr: new Trail(C.dr, 900, 0.1, 0.6) };
+const fixGeo = new THREE.BufferGeometry(); fixGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(60 * 3), 3));
+const fixPts = new THREE.Points(fixGeo, new THREE.PointsMaterial({ color: C.gps, size: 0.42, sizeAttenuation: true, transparent: true, opacity: 0.9 }));
+fixPts.frustumCulled = false; scene.add(fixPts);
+
+// satellites on the sky dome
+const sr = rng(21), SATS = [];
+const satBody = new THREE.BoxGeometry(1.4, 0.8, 0.8), satPanel = new THREE.BoxGeometry(4, 0.06, 1.1);
+const satMat = new THREE.MeshStandardMaterial({ color: 0xc9d3d8, emissive: 0x334455, metalness: 0.4, roughness: 0.4 });
+const panelMat = new THREE.MeshStandardMaterial({ color: 0x2b4e8a, emissive: 0x16305a, roughness: 0.4 });
+for (let i = 0; i < 14; i++) {
+  const g = new THREE.Group(); g.add(new THREE.Mesh(satBody, satMat));
+  const p = new THREE.Mesh(satPanel, panelMat); g.add(p);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0x9fd2ff, transparent: true, opacity: 0 }));
+  line.frustumCulled = false; scene.add(g); scene.add(line);
+  SATS.push({ g, line, az: sr() * TAU, el: 0.3 + sr() * 1.05, rate: (sr() - 0.5) * 0.01 });
+}
+
+// camera: chase keeps its offset as the rover moves; overview frames the whole field
+let view = 'chase', tween = null;
+const lastTarget = new THREE.Vector3();
+function chaseGoal() {
+  const T = sim.truth, r = V(T.x, T.y, T.z + 0.8);
+  return { p: r.clone().add(new THREE.Vector3(-15 * Math.cos(T.h) + 6 * Math.sin(T.h), 11, 15 * Math.sin(T.h) + 6 * Math.cos(T.h))), q: r };
+}
+const topGoal = () => ({ p: new THREE.Vector3(-8, 50, -50), q: new THREE.Vector3(0, 1, -2) });
+function flyTo(goal) {
+  if (reduceMotion) { const g = goal(); camera.position.copy(g.p); controls.target.copy(g.q); lastTarget.copy(g.q); return; }
+  tween = { p0: camera.position.clone(), q0: controls.target.clone(), goal, k: 0 };
+}
+{ const g = chaseGoal(); camera.position.copy(g.p); controls.target.copy(g.q); lastTarget.copy(g.q); }
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage); resize();
+
+const stateColor = M => M.state === 'nofix' ? C.muted : M.T >= 0.7 ? C.ok : M.T >= 0.35 ? C.warn : C.bad;
+let wheelDist = 0, clockT = 0;
+const poseQ = new THREE.Quaternion();
+
+function updateScene(dtR) {
+  clockT += dtR;
+  const T = sim.truth, M = sim.mon, col = new THREE.Color(stateColor(M));
+  rover.position.copy(V(T.x, T.y, T.z));
+  {
+    // sit the rover on the slope: forward along the heading, up along the terrain normal
+    const sl = slopeAt(T.x, T.y), up = new THREE.Vector3(-sl.gx, 1, sl.gy).normalize();
+    const fwd = new THREE.Vector3(Math.cos(T.h), 0, -Math.sin(T.h)); fwd.addScaledVector(up, -fwd.dot(up)).normalize();
+    const side = new THREE.Vector3().crossVectors(fwd, up);
+    poseQ.setFromRotationMatrix(new THREE.Matrix4().makeBasis(fwd, up, side));
+    rover.quaternion.slerp(poseQ, Math.min(1, dtR * 10));
+  }
+  for (const w of wheels) w.rotation.z = -wheelDist / 0.34;
+  puckMat.emissive.copy(col); puckMat.emissiveIntensity = M.state === 'nofix' ? 0.4 + 0.4 * Math.sin(clockT * 8) : 1.1;
+  haloMat.color.copy(col);
+
+  const bob = Math.sin(clockT * 2) * 0.08;
+  for (const [m, e] of [[mSen, sim.sen], [mGate, sim.gate], [mDr, sim.dr]]) { m.position.copy(onGround(e.x, e.y)); m.userData.d.rotation.y += dtR * 1.5; m.userData.d.position.y = 2.7 + bob; }
+  const r2 = 2 * Math.sqrt(sim.sen.P);
+  disc.position.copy(onGround(sim.sen.x, sim.sen.y, 0.2)); disc.scale.setScalar(r2);
+  discEdge.position.copy(disc.position); discEdge.scale.setScalar(r2);
+
+  const fx = sim.fix;
+  gpsPin.visible = link.visible = !!fx;
+  if (fx) {
+    gpsPin.position.copy(onGround(fx.x, fx.y));
+    const pos = linkGeo.attributes.position;
+    pos.setXYZ(0, fx.x, elev(fx.x, fx.y) + 2.2, -fx.y); pos.setXYZ(1, sim.sen.x, elev(sim.sen.x, sim.sen.y) + 2.7, -sim.sen.y); pos.needsUpdate = true;
+    link.computeLineDistances();
+    linkMat.color.set(M.excluded ? C.bad : C.gps);
+    linkMat.gapSize = M.excluded ? 0.3 : 0.0001;
+    linkMat.opacity = M.excluded ? 0.8 : 0.25 + 0.6 * M.T;
+  }
+  const fp = fixGeo.attributes.position, n = sim.fixes.length;
+  for (let i = 0; i < n; i++) { const f = sim.fixes[i]; fp.setXYZ(i, f.x, elev(f.x, f.y) + 0.2, -f.y); }
+  fixGeo.setDrawRange(0, n); fp.needsUpdate = true;
+
+  // satellites: higher ones are tracked first; lines fade with C/N0
+  const rx = sim.rx, ant = new THREE.Vector3(); puck.getWorldPosition(ant);
+  const order = [...SATS].sort((a, b) => b.el - a.el);
+  const cn = clamp((rx.cn0 - 20) / 25, 0, 1), jamCol = sim.jam > 0.3;
+  order.forEach((s, i) => {
+    s.az += s.rate * dtR;
+    const R = 80, p = new THREE.Vector3(R * Math.cos(s.el) * Math.cos(s.az), R * Math.sin(s.el), R * Math.cos(s.el) * Math.sin(s.az));
+    s.g.position.copy(p); s.g.lookAt(0, 0, 0);
+    const pa = s.line.geometry.attributes.position; pa.setXYZ(0, ant.x, ant.y, ant.z); pa.setXYZ(1, p.x, p.y, p.z); pa.needsUpdate = true;
+    const tracked = sim.fix && i < rx.sats, blocked = !tracked && rx.hill > 0.25 && i < 12;
+    s.line.material.opacity = tracked ? 0.07 + 0.25 * cn : blocked ? 0.22 : 0;
+    s.line.material.color.set(jamCol || blocked ? C.bad : '#9fd2ff');
+  });
+
+  // emitter waves while a spoofing or jamming fault is active
+  const spoof = sim.activeFault('jump') || sim.activeFault('drift'), jam = sim.activeFault('jam');
+  const on = spoof || jam;
+  beacon.material.color.set(on ? (jam ? C['f-jam'] : C['f-drift']) : C.muted);
+  waves.forEach((w, i) => {
+    if (!on || reduceMotion) { w.material.opacity = 0; return; }
+    const s = 2 + ((clockT * 14 + i * 22) % 66);
+    w.scale.setScalar(s); w.material.opacity = 0.7 * (1 - s / 68);
+    w.material.color.set(jam ? C['f-jam'] : C['f-drift']);
+  });
+
+  // camera
+  if (tween) {
+    tween.k = Math.min(1, tween.k + dtR / 1.1);
+    const e = tween.k < 0.5 ? 2 * tween.k * tween.k : 1 - (-2 * tween.k + 2) ** 2 / 2, g = tween.goal();
+    camera.position.lerpVectors(tween.p0, g.p, e); controls.target.lerpVectors(tween.q0, g.q, e);
+    if (tween.k >= 1) tween = null;
+  } else if (view === 'chase') {
+    const r = V(T.x, T.y, T.z + 0.8);
+    camera.position.add(r.clone().sub(lastTarget)); controls.target.copy(r);
+  }
+  lastTarget.copy(controls.target);
+}
+
+// ===== dashboard =====
+const $ = id => document.getElementById(id);
+const fmtClock = t => { const m = Math.floor(t / 60), s = t - m * 60; return String(m).padStart(2, '0') + ':' + s.toFixed(1).padStart(4, '0'); };
+const fmtMS = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+const STATE_TXT = { trusted: 'Trusted', degraded: 'Degraded', untrusted: 'Untrusted', nofix: 'No fix' };
+
+// test plan strip
+{
+  const plan = $('plan');
+  const labels = { jump: 'Jump', drift: 'Drift', drop: 'Drop', jam: 'Jam' };
+  for (const p of PLAN) {
+    const d = document.createElement('div');
+    d.style.left = (p.t / PLAN_LEN * 100) + '%'; d.style.width = (FAULTS[p.type].dur / PLAN_LEN * 100) + '%'; d.style.background = FCOL[p.type];
+    d.textContent = labels[p.type]; plan.appendChild(d);
+  }
+  const head = document.createElement('div'); head.className = 'head'; head.id = 'planHead'; plan.appendChild(head);
+}
+document.querySelectorAll('.fault').forEach(b => { b.querySelector('.fill').style.background = FCOL[b.dataset.fault]; });
+
+const ROWS = [['gps', 'Raw GPS', C.gps], ['gate', 'Threshold gate', C.gate], ['sen', 'GNSSSentinel', C.sen], ['dr', 'IMU + wheels only', C.dr]];
+$('mt').innerHTML = ROWS.map(([k, n, c]) => `<tr id="row-${k}"><td><i style="background:${c}"></i>${n}</td><td>–</td><td>–</td><td>–</td></tr>`).join('');
+
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), d = Math.min(devicePixelRatio, 2);
+  const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const x = cv.getContext('2d'); x.setTransform(d, 0, 0, d, 0, 0); x.clearRect(0, 0, r.width, r.height);
+  return { x, W: r.width, H: r.height };
+}
+function chart(cv, yMax, ticks, unit, draw) {
+  const { x, W, H } = setupCanvas(cv);
+  const L = 34, R = 10, Tp = 10, B = 18, t1 = Math.max(sim.t, 60), t0 = t1 - 60;
+  const X = t => L + (t - t0) / 60 * (W - L - R), Y = v => Tp + (1 - Math.min(v, yMax) / yMax) * (H - Tp - B);
+  x.font = '10px "IBM Plex Mono", monospace'; x.textBaseline = 'middle';
+  for (const f of sim.faults) {
+    const a = Math.max(f.t0, t0), b = Math.min(f.t0 + f.dur, sim.t); if (b <= a) continue;
+    x.fillStyle = FCOL[f.type]; x.globalAlpha = 0.16; x.fillRect(X(a), Tp, X(b) - X(a), H - Tp - B);
+    x.globalAlpha = 0.9; if (X(b) - X(a) > 30) x.fillText(FAULTS[f.type].name.split(' ').pop(), X(a) + 4, Tp + 7);
+    x.globalAlpha = 1;
+  }
+  for (const v of ticks) {
+    x.strokeStyle = C.line; x.lineWidth = 1; x.beginPath(); x.moveTo(L, Y(v)); x.lineTo(W - R, Y(v)); x.stroke();
+    x.fillStyle = C.muted; x.textAlign = 'right'; x.fillText(v + unit, L - 5, Y(v));
+  }
+  x.textAlign = 'center'; x.fillStyle = C.muted;
+  [[t0, '−60 s'], [t0 + 30, '−30 s'], [t1, 'now']].forEach(([t, s]) => x.fillText(s, Math.min(Math.max(X(t), L + 14), W - R - 12), H - 8));
+  x.save(); x.beginPath(); x.rect(L, Tp - 2, W - L - R, H - Tp - B + 4); x.clip();
+  draw(x, X, Y, H - B);
+  x.restore();
+}
+function series(x, X, Y, key, color, width) {
+  x.strokeStyle = color; x.lineWidth = width; x.lineJoin = 'round'; x.beginPath();
+  let pen = false;
+  for (const p of sim.series) { const v = p[key]; if (isNaN(v)) { pen = false; continue; } pen ? x.lineTo(X(p.t), Y(v)) : x.moveTo(X(p.t), Y(v)); pen = true; }
+  x.stroke();
+}
+function drawCharts() {
+  chart($('chT'), 1, [0, 0.35, 0.7, 1], '', (x, X, Y, base) => {
+    const s = sim.series; if (s.length < 2) return;
+    const grad = x.createLinearGradient(0, Y(1), 0, base); grad.addColorStop(0, C.sen + '55'); grad.addColorStop(1, C.sen + '00');
+    x.beginPath(); x.moveTo(X(s[0].t), base); for (const p of s) x.lineTo(X(p.t), Y(p.T)); x.lineTo(X(s[s.length - 1].t), base); x.closePath();
+    x.fillStyle = grad; x.fill();
+    series(x, X, Y, 'T', C.sen, 2);
+    const p = s[s.length - 1]; x.fillStyle = C.sen; x.beginPath(); x.arc(X(p.t), Y(p.T), 3.5, 0, TAU); x.fill();
+  });
+  chart($('chE'), 8, [0, 2, 4, 6, 8], ' m', (x, X, Y) => {
+    series(x, X, Y, 'gps', C.gps + 'aa', 1);
+    series(x, X, Y, 'gate', C.gate, 1.8);
+    series(x, X, Y, 'sen', C.sen, 2.2);
+  });
+}
+
+function setText(id, v) { const e = $(id); if (e.textContent !== v) e.textContent = v; }
+function updateUI() {
+  const M = sim.mon, rx = sim.rx, col = stateColor(M);
+  setText('clk', fmtClock(sim.t));
+  setText('planTxt', sim.auto ? `Test plan ${fmtMS(sim.t % PLAN_LEN)} / ${fmtMS(PLAN_LEN)}` : 'Manual fault injection');
+  const act = Object.keys(FAULTS).filter(k => sim.activeFault(k));
+  setText('banner', act.length ? act.map(k => FAULTS[k].name).join(' + ') : 'No fault injected');
+  $('banner').classList.toggle('on', act.length > 0);
+  $('planHead').style.left = (sim.t % PLAN_LEN) / PLAN_LEN * 100 + '%';
+  $('plan').style.opacity = sim.auto ? 1 : 0.45;
+
+  $('gArc').setAttribute('stroke-dasharray', `${(M.T * 100).toFixed(1)} 100`); $('gArc').setAttribute('stroke', col);
+  setText('tVal', M.T.toFixed(2));
+  setText('tState', STATE_TXT[M.state]); $('tState').style.background = col;
+  const bars = [['f', M.f, C.bad], ['g', M.g, C.warn], ['q', M.q, C.ok]];
+  for (const [k, v, c] of bars) { setText(k + 'Val', v.toFixed(2)); $(k + 'Bar').style.width = (v * 100) + '%'; $(k + 'Bar').style.background = c; }
+  const why = rx.hill > 0.3 ? ' The hill is blocking the sky.' : '';
+  $('rNote').innerHTML = M.state === 'nofix' ? 'No GPS fix. The rover is navigating on <b>IMU and wheel odometry only</b>.' + why
+    : M.excluded ? '<b>GPS excluded from the filter.</b> Navigating on IMU and wheel odometry; condition flagged.' + why
+    : `GPS noise in the filter: <b>R × ${(1 / Math.max(M.T, 0.05)).toFixed(1)}</b>. ` + (M.T >= 0.7 ? 'Fused position follows GPS.' : 'GPS is down-weighted, so dead reckoning carries more of the estimate.');
+
+  setText('zoneTxt', sim.jam > 0.3 ? 'jammed' : rx.hill > 0.3 ? 'hill climb · sky masked' : rx.urb > 0.5 ? 'urban canyon' : rx.tre > 0.5 ? 'tree cover' : 'open sky');
+  const T = sim.truth, imu = M.excluded || M.state === 'nofix';
+  setText('nav', imu ? 'Navigating on IMU + wheels' : M.T < 0.7 ? 'GNSS down-weighted · IMU leading' : 'Navigating on GNSS + IMU');
+  $('nav').style.color = imu ? C.bad : M.T < 0.7 ? C.warn : C.ok;
+  setText('tgGrade', `${T.grade >= 0 ? '+' : '−'}${Math.abs(T.grade * 100).toFixed(0)}% ${T.grade > 0.03 ? 'climbing' : T.grade < -0.03 ? 'descending' : 'level'}`);
+  setText('tgElev', `elevation ${T.z.toFixed(1)} m`);
+  setText('tgPitch', `${(sim.imuPitch * 180 / Math.PI).toFixed(1)}°`);
+  setText('tgSky', rx.hill > 0.05 ? `hill masks ${Math.round(rx.hill * 100)}% of sky` : 'sky clear');
+  setText('rxSat', `${rx.sats} · ${rx.hdop.toFixed(1)}`);
+  setText('rxFix', sim.fix ? '3D fix · 5 Hz' : 'no fix');
+  setText('rxCn0', `${Math.round(rx.cn0)} dB-Hz`);
+  const sig = (id, s) => { $(id).style.color = s > 3 ? C.bad : s > 2 ? C.warn : ''; };
+  if (sim.fix) {
+    setText('rsD', `${M.rdm.toFixed(2)} m`); setText('rsDs', `${M.rd.toFixed(1)}σ · 2 s window`); sig('rsD', M.rd);
+    setText('rsV', `${M.rvm.toFixed(2)} m/s`); setText('rsVs', `${M.rv.toFixed(1)}σ · vs wheel speed`); sig('rsV', M.rv);
+    setText('rsH', `${(M.rh * 180 / Math.PI).toFixed(1)}°`);
+    setText('rsI', `${M.rim.toFixed(2)} m`); setText('rsIs', `${M.ri.toFixed(1)}σ · vs prediction`); sig('rsI', M.ri);
+  } else for (const id of ['rsD', 'rsV', 'rsH', 'rsI']) { setText(id, '–'); $(id).style.color = ''; }
+
+  document.querySelectorAll('.fault').forEach(b => {
+    const f = sim.activeFault(b.dataset.fault);
+    b.classList.toggle('active', !!f); b.setAttribute('aria-pressed', f ? 'true' : 'false');
+    b.querySelector('.fill').style.width = f ? ((sim.t - f.t0) / f.dur * 100) + '%' : '0';
+  });
+
+  let best = null, bestV = 1e9;
+  for (const [k] of ROWS) {
+    const s = sim.stats[k], rmse = s.n ? Math.sqrt(s.ss / s.n) : NaN, now = sim.err[k];
+    const tds = $('row-' + k).children;
+    tds[1].textContent = isNaN(now) ? '–' : now.toFixed(2);
+    tds[2].textContent = isNaN(rmse) ? '–' : rmse.toFixed(2);
+    tds[3].textContent = s.n ? s.max.toFixed(2) : '–';
+    if (rmse < bestV) { bestV = rmse; best = k; }
+  }
+  for (const [k] of ROWS) $('row-' + k).classList.toggle('best', k === best && sim.t > 5);
+  const d = sim.lastDet, r = sim.lastRec;
+  setText('mDet', d ? (d.delay == null ? 'missed' : d.delay.toFixed(1) + ' s') : '–');
+  setText('mDetS', d ? FAULTS[d.type].name.toLowerCase() : 'time until T < 0.5');
+  setText('mRec', r ? r.time.toFixed(1) + ' s' : '–');
+  setText('mRecS', r ? 'after ' + FAULTS[r.type].name.toLowerCase() : 'fault end until T > 0.7');
+  setText('mFa', String(sim.falseAlarms));
+  setText('mGr', String(sim.gateRejects));
+  setText('mHill', String(sim.hillTakeovers));
+  setText('mImu', `${Math.round(sim.imuTime)} s`);
+  setText('mImuS', `${sim.t > 0 ? Math.round(sim.imuTime / sim.t * 100) : 0}% of run`);
+}
+
+// controls
+let playing = true, speed = 1;
+function setPlaying(p) { playing = p; $('play').textContent = p ? 'Pause' : 'Play'; $('play').setAttribute('aria-pressed', p ? 'false' : 'true'); }
+$('play').onclick = () => setPlaying(!playing);
+document.querySelectorAll('[data-speed]').forEach(b => b.onclick = () => {
+  speed = +b.dataset.speed; document.querySelectorAll('[data-speed]').forEach(o => o.setAttribute('aria-pressed', o === b ? 'true' : 'false'));
+});
+document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
+  view = b.dataset.view; document.querySelectorAll('[data-view]').forEach(o => o.setAttribute('aria-pressed', o === b ? 'true' : 'false'));
+  flyTo(view === 'top' ? topGoal : chaseGoal);
+});
+function toggleFault(type) { sim.activeFault(type) ? sim.clear(type) : sim.inject(type); }
+document.querySelectorAll('.fault').forEach(b => b.onclick = () => toggleFault(b.dataset.fault));
+$('clear').onclick = () => sim.clear();
+$('auto').onchange = e => { sim.auto = e.target.checked; sim.planPhase = sim.t % PLAN_LEN; };
+$('reset').onclick = () => {
+  sim.reset(); sim.auto = $('auto').checked; wheelDist = 0;
+  for (const k in trails) trails[k].clear();
+  if (view === 'chase') flyTo(chaseGoal);
+};
+addEventListener('keydown', e => {
+  if (e.target.closest('input, textarea')) return;
+  const map = { '1': 'jump', '2': 'drift', '3': 'drop', '4': 'jam' };
+  if (e.key === ' ' && !e.target.closest('button')) { e.preventDefault(); setPlaying(!playing); }
+  else if (map[e.key]) toggleFault(map[e.key]);
+  else if (e.key === '0') sim.clear();
+});
+
+// main loop
+let last = performance.now(), acc = 0, stepCount = 0, uiT = 0;
+function frame(now) {
+  const dtR = Math.min(0.1, (now - last) / 1000); last = now;
+  if (playing) {
+    acc += dtR * speed;
+    let n = 0;
+    while (acc >= 0.02 && n < 500) {
+      sim.step(0.02); acc -= 0.02; n++; wheelDist += sim.truth.v * 0.02;
+      if (++stepCount % 5 === 0) {
+        trails.truth.push(sim.truth.x, sim.truth.y); trails.sen.push(sim.sen.x, sim.sen.y);
+        trails.gate.push(sim.gate.x, sim.gate.y); trails.dr.push(sim.dr.x, sim.dr.y);
+      }
+    }
+  }
+  updateScene(dtR);
+  controls.update();
+  renderer.render(scene, camera);
+  uiT += dtR;
+  if (uiT > 0.1) { uiT = 0; updateUI(); drawCharts(); }
+  requestAnimationFrame(frame);
+}
+updateUI(); drawCharts();
+requestAnimationFrame(frame);
+</script>
+
+
+</body>
+</html>
